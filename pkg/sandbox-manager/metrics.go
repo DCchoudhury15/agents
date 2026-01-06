@@ -1,4 +1,4 @@
-package sandboxcr
+package sandbox_manager // Shared with api.go
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
