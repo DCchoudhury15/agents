@@ -19,6 +19,8 @@ func (m *SandboxManager) ClaimSandbox(ctx context.Context, user, template string
 	start := time.Now()
 	pool, ok := m.infra.GetPoolByTemplate(template)
 	if !ok {
+		// Requirement: Track failure in API layer
+		SandboxCreationResponses.WithLabelValues("failure").Inc()
 		return nil, errors.NewError(errors.ErrorNotFound, fmt.Sprintf("pool %s not found", template))
 	}
 	sandbox, err := pool.ClaimSandbox(ctx, user, consts.DefaultPoolingCandidateCounts, func(sbx infra.Sandbox) {
@@ -26,16 +28,25 @@ func (m *SandboxManager) ClaimSandbox(ctx context.Context, user, template string
 		sbx.SetOwnerReferences([]metav1.OwnerReference{}) // TODO: just try empty slice
 	})
 	if err != nil {
+		// Requirement: Track failure in API layer
+		SandboxCreationResponses.WithLabelValues("failure").Inc()
 		return nil, errors.NewError(errors.ErrorInternal, fmt.Sprintf("failed to claim sandbox: %v", err))
 	}
+
+	// Success: Record metrics
+	SandboxCreationResponses.WithLabelValues("success").Inc()
+	// Requirement: Only measure the latency when no error exists
+	SandboxCreationLatency.Observe(float64(time.Since(start).Milliseconds()))
+
 	log.Info("sandbox claimed", "sandbox", klog.KObj(sandbox), "cost", time.Since(start))
-	start = time.Now()
+
+	startSync := time.Now()
 	route := sandbox.GetRoute()
 	err = m.proxy.SyncRouteWithPeers(route)
 	if err != nil {
-		log.Error(err, "failed to sync route with peers", "cost", time.Since(start))
+		log.Error(err, "failed to sync route with peers", "cost", time.Since(startSync))
 	} else {
-		log.Info("route synced with peers", "cost", time.Since(start), "route", route)
+		log.Info("route synced with peers", "cost", time.Since(startSync), "route", route)
 	}
 	return sandbox, nil
 }
